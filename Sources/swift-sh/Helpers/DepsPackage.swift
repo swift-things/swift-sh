@@ -135,12 +135,13 @@ struct DepsPackage {
 					logger.warning("Got multiple lines matching repl args; taking the last one.", metadata: ["replaced-match": "\(ret.joined(separator: " "))"])
 				}
 				let newRet = capture.split(separator: " ").map(String.init)
+				/* We used to check for -L, but Swift 6.4 has removed it for some reason.
+				 * We add it later, because it is indeed needed. */
 				if (
 					!newRet.contains(where: { $0.hasPrefix("-I") }) ||
-					!newRet.contains(where: { $0.hasPrefix("-L") }) ||
 					!newRet.contains(where: { $0.hasPrefix("-l") })
 				) {
-					logger.notice("Suspicious REPL args found.", metadata: ["args": "\(newRet.joined(separator: " "))"])
+					logger.notice("Suspicious REPL args found (no include path, nor library to link with).", metadata: ["args": "\(newRet.joined(separator: " "))"])
 				}
 				ret = newRet
 			}
@@ -155,74 +156,127 @@ struct DepsPackage {
 			struct CannotFindREPLArgs : Error {var swiftStderr: String}
 			throw CannotFindREPLArgs(swiftStderr: errorOutput.joined(separator: "\n"))
 		}
+		
 		/* Now swift has given us the arguments it thinks are needed to start the script.
 		 * Spoiler: they are not enough!
-		 * - When the deps contain an xcframework dependency, we have to add the -I option for swift to find the headers of the frameworks.
-		 * - Starting w/ Swift 6, the arguments given by the REPL invocation give an incorrect include search path: we must add `/Modules` to the include path.
-		 *   We check whether the `Modules` folder exists and add it to the command-line if it does.
-		 *   Previously we added it the modified version unconditionally for each -I arguments,
-		 *    but if both versions are present we get compilation errors for some dependencies (for ArgumentParser for instance).
-		 * - For some dependencies that have a system library target, the path to the module.modulemap of the target should be added. */
-		/* Add `/Modules` variants import options for Swift 6. */
-		var idx = 0
-		while idx < ret.count {
-			defer {idx += 1}
-			let (path, hasDashI): (String, Bool)
-			if ret[idx] == "-I" {
-				idx += 1
-				guard idx < ret.count else {
-					break
-				}
-				path = ret[idx]
-				hasDashI = false
-			} else if ret[idx].hasPrefix("-I") {
-				path = String(ret[idx].dropFirst(2))
-				hasDashI = true
-			} else {
-				continue
-			}
+		 * There are a bunch of changes we have to do to get a fully working invocation. */
+		
+		/* Check for Swift <6.4.
+		 * Before Swift 6.4, the invocation never contained the `fmodule-map-file` option.
+		 * I’m almost certain it is *always* present with Swift 6.4 (I tested on a package with no dependencies and it was there). */
+		if !(ret.contains{ $0.hasPrefix("-fmodule-map-file") }) {
+			/* These changes are required before Swift 6.4:
+			 * - When the deps contain an XCFramework dependency, we have to add the -I option for Swift to find the headers of the frameworks;
+			 * - For some dependencies that have a system library target, the path to the module.modulemap of the target should be added;
+			 * - Starting w/ Swift 6, the arguments given by the REPL invocation give an incorrect include search path:
+			 *    we must add `/Modules` to the include path.
+			 *   We check whether the `Modules` folder exists and add it to the command-line if it does.
+			 *   Previously we added it the modified version unconditionally for each -I arguments,
+			 *    but if both versions are present we get compilation errors for some dependencies (for ArgumentParser for instance). */
 			
-			var isDir = ObjCBool(false)
-			let pathWithModules = String(path.reversed().drop(while: { $0 == "/" }).reversed()) + "/Modules"
-			if fm.fileExists(atPath: pathWithModules, isDirectory: &isDir) && isDir.boolValue {
-				ret[idx] = (hasDashI ? "-I" : "") + pathWithModules
+			/* Add `/Modules` variants import options for Swift 6. */
+			var idx = 0
+			while idx < ret.count {
+				defer {idx += 1}
+				let (path, hasDashI): (String, Bool)
+				if ret[idx] == "-I" {
+					idx += 1
+					guard idx < ret.count else {
+						break
+					}
+					path = ret[idx]
+					hasDashI = false
+				} else if ret[idx].hasPrefix("-I") {
+					path = String(ret[idx].dropFirst(2))
+					hasDashI = true
+				} else {
+					continue
+				}
+				
+				var isDir = ObjCBool(false)
+				let pathWithModules = String(path.reversed().drop(while: { $0 == "/" }).reversed()) + "/Modules"
+				if fm.fileExists(atPath: pathWithModules, isDirectory: &isDir) && isDir.boolValue {
+					ret[idx] = (hasDashI ? "-I" : "") + pathWithModules
+				}
 			}
-		}
-		/* Add xcframework import options. */
-		let artifactsFolder = packageFolder.appending(".build/artifacts")
-		if let directoryEnumerator = fm.enumerator(at: artifactsFolder.url, includingPropertiesForKeys: nil) {
-			while let url = directoryEnumerator.nextObject() as! URL? {
-				/* These rules are ad-hoc and work in the case I tested (an XcodeTools dependency).
-				 * There are probably many cases where they won’t work. */
-				let isXcframework = url.deletingLastPathComponent().deletingLastPathComponent().pathExtension == "xcframework"
-				let isMacOS = url.deletingLastPathComponent().lastPathComponent.lowercased().hasPrefix("macos-")
-				let isFramework = url.pathExtension == "framework"
-				let isHeaders = url.lastPathComponent.lowercased() == "headers"
-				if isXcframework && isMacOS {
-					if isFramework {
-						ret.append("-I\(url.absoluteURL.path(percentEncoded: false))/Headers")
-						directoryEnumerator.skipDescendants()
-					} else if isHeaders {
-						ret.append("-I\(url.absoluteURL.path(percentEncoded: false))")
+			/* Add XCFramework import options. */
+			let artifactsFolder = packageFolder.appending(".build/artifacts")
+			if let directoryEnumerator = fm.enumerator(at: artifactsFolder.url, includingPropertiesForKeys: nil) {
+				while let url = directoryEnumerator.nextObject() as! URL? {
+					/* These rules are ad-hoc and work in the case I tested (an XcodeTools dependency).
+					 * There are probably many cases where they won’t work. */
+					let isXCFramework = url.deletingLastPathComponent().deletingLastPathComponent().pathExtension == "xcframework"
+					let isMacOS = url.deletingLastPathComponent().lastPathComponent.lowercased().hasPrefix("macos-")
+					let isFramework = url.pathExtension == "framework"
+					let isHeaders = url.lastPathComponent.lowercased() == "headers"
+					if isXCFramework && isMacOS {
+						if isFramework {
+							ret.append("-I\(url.absoluteURL.path(percentEncoded: false))/Headers")
+							directoryEnumerator.skipDescendants()
+						} else if isHeaders {
+							ret.append("-I\(url.absoluteURL.path(percentEncoded: false))")
+							directoryEnumerator.skipDescendants()
+						}
+					}
+				}
+			}
+			/* Add module.modulemap in the source code checkouts that are “[system]”.
+			 * Note there is probably a much better way of doing this, but I don’t know it. */
+			let checkoutFolder = packageFolder.appending(".build/checkouts")
+			if let directoryEnumerator = fm.enumerator(at: checkoutFolder.url, includingPropertiesForKeys: nil) {
+				while let url = directoryEnumerator.nextObject() as! URL? {
+					/* These rules are ad-hoc and work in the case I tested (an XcodeTools dependency).
+					 * There are probably many cases where they won’t work. */
+					if url.lastPathComponent.lowercased() == "module.modulemap",
+						try String(contentsOf: url, encoding: .utf8).contains("[system]")
+					{
+						ret.append("-I\(url.deletingLastPathComponent().absoluteURL.path(percentEncoded: false))")
 						directoryEnumerator.skipDescendants()
 					}
 				}
 			}
 		}
-		/* Add module.modulemap in the source code checkouts that are “[system]”.
-		 * Note there is probably a much better way of doing this, but I don’t know it. */
-		let checkoutFolder = packageFolder.appending(".build/checkouts")
-		if let directoryEnumerator = fm.enumerator(at: checkoutFolder.url, includingPropertiesForKeys: nil) {
-			while let url = directoryEnumerator.nextObject() as! URL? {
-				/* These rules are ad-hoc and work in the case I tested (an XcodeTools dependency).
-				 * There are probably many cases where they won’t work. */
-				if url.lastPathComponent.lowercased() == "module.modulemap",
-					try String(contentsOf: url, encoding: .utf8).contains("[system]")
-				{
-					ret.append("-I\(url.deletingLastPathComponent().absoluteURL.path(percentEncoded: false))")
-					directoryEnumerator.skipDescendants()
+		if !(ret.contains{ $0.hasPrefix("-L") }) {
+			/* Swift 6.4 fixes a lot of issues with the list of options, but for some reason it removes the `-L` option.
+			 * We add it back, because it is, indeed, needed.
+			 * To retrieve the path of the library, we have two options:
+			 *   - either say “it’s `$PACKAGE_PATH/.build/(debug|release)`;
+			 *   - or use the proper Swift command to retrieve the path.
+			 * We’ll go with the latter solution (should hold the test of time more); the former solution is commented. */
+			// let libraryOutputParent = packageFolder.appending(".build").appending(buildDependenciesInReleaseMode ? "release" : "debug")
+			// var isDir = ObjCBool(false)
+			// guard fm.fileExists(atPath: libraryOutputParent.string, isDirectory: &isDir), isDir.boolValue else {
+			// 	struct CannotFindLibraryOutputParentDir : Error {}
+			// 	throw CannotFindLibraryOutputParentDir()
+			// }
+			let pi = ProcessInvocation(
+				"swift", args: ["build", "--show-bin-path"] + (buildDependenciesInReleaseMode ? ["-c", "release"] : []) + (disableSandboxForPackageResolution ? ["--disable-sandbox"] : []),
+				usePATH: true, workingDirectory: packageFolder.url,
+				stdinRedirect: .fromNull, stdoutRedirect: .capture, stderrRedirect: .capture
+			)
+			var swiftOutput: String?
+			for try await lineWithSource in pi {
+				switch lineWithSource.fd {
+					case .standardOutput:
+						guard swiftOutput == nil else {
+							logger.notice("swift standard (unexpected) output: \(lineWithSource.strLineOrHex())")
+							struct UnexpectedShowBinPathOutput : Error {}
+							throw UnexpectedShowBinPathOutput()
+						}
+						swiftOutput = try lineWithSource.strLine()
+						
+					case .standardError:
+						logger.notice("swift error output: \(lineWithSource.strLineOrHex())")
+						
+					default:
+						logger.error("swift output on unexpected fd (\(lineWithSource.fd)): \(lineWithSource.strLineOrHex())")
 				}
 			}
+			guard let libraryOutputParent = swiftOutput else {
+				struct NoPathFromShowBinPath : Error {}
+				throw NoPathFromShowBinPath()
+			}
+			ret.append("-L\(libraryOutputParent)")
 		}
 		return ret
 	}
