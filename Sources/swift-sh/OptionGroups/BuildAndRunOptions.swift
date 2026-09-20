@@ -23,6 +23,9 @@ final class BuildAndRunOptions : ParsableArguments {
 	@Option(name: .long)
 	var swiftPath: FilePath = "swift"
 	
+	@Option(name: .customLong("Xs", withSingleDash: true), parsing: .unconditionalSingleValue, help: "An array of parameters to add unconditionally at the end of the swift invocation (repeat the option for multiple parameters to add).\nThe two Swift invocations to which this will be added are `swift run --repl ...` and `swift build ...` (where the latter one may not happen).")
+	var additionalSwiftOptions: [String] = []
+	
 	@OptionGroup
 	var scriptOptions: ScriptOptions
 	
@@ -84,8 +87,10 @@ final class BuildAndRunOptions : ParsableArguments {
 			let packageFolderPath = try xdgDirs.ensureCacheDirPath(packageFolderRelativePath)
 			let ret = try await depsPackage.retrieveREPLInvocation(
 				packageFolder: packageFolderPath,
+				swiftPath: swiftPath,
 				buildDependenciesInReleaseMode: buildDependenciesInReleaseMode,
 				disableSandboxForPackageResolution: disableSandboxForPackageResolution,
+				additionalSwiftOptions: additionalSwiftOptions,
 				fileManager: fm, logger: logger
 			)
 			
