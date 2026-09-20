@@ -84,6 +84,7 @@ final class BuildAndRunOptions : ParsableArguments {
 			let packageFolderPath = try xdgDirs.ensureCacheDirPath(packageFolderRelativePath)
 			let ret = try await depsPackage.retrieveREPLInvocation(
 				packageFolder: packageFolderPath,
+				swiftPath: swiftPath,
 				buildDependenciesInReleaseMode: buildDependenciesInReleaseMode,
 				disableSandboxForPackageResolution: disableSandboxForPackageResolution,
 				fileManager: fm, logger: logger

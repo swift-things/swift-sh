@@ -61,7 +61,7 @@ struct DepsPackage {
 		self.packageHash = Data(SHA256.hash(data: packageSwiftContent))
 	}
 	
-	func retrieveREPLInvocation(packageFolder: FilePath, buildDependenciesInReleaseMode: Bool, disableSandboxForPackageResolution: Bool, fileManager fm: FileManager, logger: Logger) async throws -> [String] {
+	func retrieveREPLInvocation(packageFolder: FilePath, swiftPath: FilePath, buildDependenciesInReleaseMode: Bool, disableSandboxForPackageResolution: Bool, fileManager fm: FileManager, logger: Logger) async throws -> [String] {
 		/* Let’s see if we need to update/create the Package.swift file. */
 		let packageSwiftPath = packageFolder.appending("Package.swift")
 		let packageSwiftURL = packageSwiftPath.url
@@ -95,7 +95,7 @@ struct DepsPackage {
 		let slaveFd = FileDescriptor(rawValue: slaveRawFd)
 		let masterFd = FileDescriptor(rawValue: masterRawFd)
 		let pi = ProcessInvocation(
-			"swift", args: ["run", "--repl"] + (buildDependenciesInReleaseMode ? ["-c", "release"] : []) + (disableSandboxForPackageResolution ? ["--disable-sandbox"] : []),
+			swiftPath, args: ["run", "--repl"] + (buildDependenciesInReleaseMode ? ["-c", "release"] : []) + (disableSandboxForPackageResolution ? ["--disable-sandbox"] : []),
 			usePATH: true, workingDirectory: packageFolder.url,
 			/* The environment below tricks swift somehow into allowing the REPL when stdout is not a tty.
 			 * We do one better and give it a pty directly and we know we’re good. */
@@ -250,7 +250,7 @@ struct DepsPackage {
 			// 	throw CannotFindLibraryOutputParentDir()
 			// }
 			let pi = ProcessInvocation(
-				"swift", args: ["build", "--show-bin-path"] + (buildDependenciesInReleaseMode ? ["-c", "release"] : []) + (disableSandboxForPackageResolution ? ["--disable-sandbox"] : []),
+				swiftPath, args: ["build", "--show-bin-path"] + (buildDependenciesInReleaseMode ? ["-c", "release"] : []) + (disableSandboxForPackageResolution ? ["--disable-sandbox"] : []),
 				usePATH: true, workingDirectory: packageFolder.url,
 				stdinRedirect: .fromNull, stdoutRedirect: .capture, stderrRedirect: .capture
 			)

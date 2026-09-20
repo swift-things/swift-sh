@@ -30,7 +30,7 @@ struct Run : AsyncParsableCommand {
 		defer {cleanup()}
 		
 		let allArgs = args + [swiftFile] + scriptArguments
-		logger.trace("Running script.", metadata: ["invocation": .array((["swift"] + allArgs).map{ "\($0)" })])
+		logger.trace("Running script.", metadata: ["invocation": .array(([swiftPath] + allArgs).map{ "\($0)" })])
 		let (exitCode, terminationReason) = try await ProcessInvocation(
 			swiftPath, args: allArgs, usePATH: true,
 			stdinRedirect: stdinData.flatMap{ .send($0) } ?? .none(setFgPgID: setFgPgID), stdoutRedirect: .none, stderrRedirect: .none,
