@@ -50,7 +50,7 @@ final class BuildAndRunOptions : ParsableArguments {
 				 * Or we could remove the file just after launching swift with it (to be tested). */
 				let p = scriptPath.0.string
 				do    {try fm.removeItem(atPath: p)}
-				catch {logger.warning("Failed removings temporary file.", metadata: ["file-path": "\(p)", "error": "\(error)"])}
+				catch {logger.warning("Failed removing temporary file.", metadata: ["file-path": "\(p)", "error": "\(error)"])}
 			}
 		}
 		
