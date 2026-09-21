@@ -153,7 +153,12 @@ struct DepsPackage {
 			ret = nil
 		}
 		guard var ret else {
-			struct CannotFindREPLArgs : Error {var swiftStderr: String}
+			struct CannotFindREPLArgs : Error, CustomStringConvertible {
+				var swiftStderr: String
+				var description: String {
+					"Cannot find REPL args for launching the script.\nSwift stderr output:\n\(swiftStderr)"
+				}
+			}
 			throw CannotFindREPLArgs(swiftStderr: errorOutput.joined(separator: "\n"))
 		}
 		
