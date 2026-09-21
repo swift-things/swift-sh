@@ -71,6 +71,7 @@ final class BuildAndRunOptions : ParsableArguments {
 		
 		let depsPackage = try DepsPackage(
 			scriptSource: scriptSource, scriptData: &scriptData, scriptHash: &scriptHash,
+			swiftVersion: scriptOptions.swiftVersion,
 			useSSHForGithubDependencies: useSSHForGithubDependencies,
 			skipPackageOnNoRemoteModules: skipPackageOnNoRemoteModules,
 			fileManager: fm, logger: logger

@@ -17,7 +17,7 @@ struct DepsPackage {
 	private let packageSwiftContent: Data
 	
 	/* Returns nil if no package is needed (skipPackageOnNoRemoteModules && no remote package). */
-	init?(scriptSource: ScriptSource, scriptData: inout Data?, scriptHash: inout Data?, useSSHForGithubDependencies: Bool, skipPackageOnNoRemoteModules: Bool, fileManager fm: FileManager, logger: Logger) throws {
+	init?(scriptSource: ScriptSource, scriptData: inout Data?, scriptHash: inout Data?, swiftVersion: String?, useSSHForGithubDependencies: Bool, skipPackageOnNoRemoteModules: Bool, fileManager fm: FileManager, logger: Logger) throws {
 		/* Let’s parse the source file.
 		 * We’re doing a very bad job at parsing, but that’s mostly on purpose. */
 		var importSpecs = [ImportSpecification]()
@@ -57,7 +57,7 @@ struct DepsPackage {
 			return nil
 		}
 		
-		self.packageSwiftContent = Self.packageSwiftContentWith(importSpecifications: importSpecs, useSSHForGithubDependencies: useSSHForGithubDependencies, fileManager: fm, logger: logger)
+		self.packageSwiftContent = Self.packageSwiftContentWith(importSpecifications: importSpecs, swiftVersion: swiftVersion, useSSHForGithubDependencies: useSSHForGithubDependencies, fileManager: fm, logger: logger)
 		self.packageHash = Data(SHA256.hash(data: packageSwiftContent))
 	}
 	
@@ -281,8 +281,8 @@ struct DepsPackage {
 		return ret
 	}
 	
-	private static func packageSwiftContentWith(importSpecifications: [ImportSpecification], useSSHForGithubDependencies: Bool, fileManager: FileManager, logger: Logger?) -> Data {
-		let (swiftVersion, platforms): (String, String) = {
+	private static func packageSwiftContentWith(importSpecifications: [ImportSpecification], swiftVersion: String?, useSSHForGithubDependencies: Bool, fileManager: FileManager, logger: Logger?) -> Data {
+		let (inferredSwiftVersion, platforms): (String, String) = {
 #if os(macOS)
 			/* We declare the platform for the current OS version, which avoids problems in scripts using recent-ish APIs.
 			 * We use the oldest supported Swift version for the current platform. */
@@ -312,7 +312,7 @@ struct DepsPackage {
 #endif
 		}()
 		return Data(#"""
-			// swift-tools-version:\#(swiftVersion)
+			// swift-tools-version:\#(swiftVersion ?? inferredSwiftVersion)
 			import PackageDescription
 			
 			
