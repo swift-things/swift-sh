@@ -17,7 +17,7 @@ struct DepsPackage {
 	private let packageSwiftContent: Data
 	
 	/* Returns nil if no package is needed (skipPackageOnNoRemoteModules && no remote package). */
-	init?(scriptSource: ScriptSource, scriptData: inout Data?, scriptHash: inout Data?, useSSHForGithubDependencies: Bool, skipPackageOnNoRemoteModules: Bool, fileManager fm: FileManager, logger: Logger) throws {
+	init?(scriptSource: ScriptSource, scriptData: inout Data?, scriptHash: inout Data?, swiftVersion: String?, useSSHForGithubDependencies: Bool, skipPackageOnNoRemoteModules: Bool, fileManager fm: FileManager, logger: Logger) throws {
 		/* Let’s parse the source file.
 		 * We’re doing a very bad job at parsing, but that’s mostly on purpose. */
 		var importSpecs = [ImportSpecification]()
@@ -57,7 +57,7 @@ struct DepsPackage {
 			return nil
 		}
 		
-		self.packageSwiftContent = Self.packageSwiftContentWith(importSpecifications: importSpecs, useSSHForGithubDependencies: useSSHForGithubDependencies, fileManager: fm)
+		self.packageSwiftContent = Self.packageSwiftContentWith(importSpecifications: importSpecs, swiftVersion: swiftVersion, useSSHForGithubDependencies: useSSHForGithubDependencies, fileManager: fm, logger: logger)
 		self.packageHash = Data(SHA256.hash(data: packageSwiftContent))
 	}
 	
@@ -153,7 +153,12 @@ struct DepsPackage {
 			ret = nil
 		}
 		guard var ret else {
-			struct CannotFindREPLArgs : Error {var swiftStderr: String}
+			struct CannotFindREPLArgs : Error, CustomStringConvertible {
+				var swiftStderr: String
+				var description: String {
+					"Cannot find REPL args for launching the script.\nSwift stderr output:\n\(swiftStderr)"
+				}
+			}
 			throw CannotFindREPLArgs(swiftStderr: errorOutput.joined(separator: "\n"))
 		}
 		
@@ -281,24 +286,38 @@ struct DepsPackage {
 		return ret
 	}
 	
-	private static func packageSwiftContentWith(importSpecifications: [ImportSpecification], useSSHForGithubDependencies: Bool, fileManager: FileManager) -> Data {
-		let platforms: String = {
+	private static func packageSwiftContentWith(importSpecifications: [ImportSpecification], swiftVersion: String?, useSSHForGithubDependencies: Bool, fileManager: FileManager, logger: Logger?) -> Data {
+		let (inferredSwiftVersion, platforms): (String, String) = {
 #if os(macOS)
+			/* We declare the platform for the current OS version, which avoids problems in scripts using recent-ish APIs.
+			 * We use the oldest supported Swift version for the current platform. */
 			let version = ProcessInfo.processInfo.operatingSystemVersion
-			if version.majorVersion <= 10 {
-				return "[.macOS(.v\(version.majorVersion)_\(version.minorVersion))]"
-			} else {
-				/* We cap at macOS 13
-				 *  which is the latest version available for Swift 5.7
-				 *  which is the version we use in our generated Package.swift file. */
-				return "[.macOS(.v\(min(13, version.majorVersion)))]"
+			switch (version.majorVersion, version.minorVersion) {
+				/* 10.x macOS versions. */
+				case (10, let m) where m <= 14: return ("5.0", "[.macOS(.v\(version.majorVersion)_\(version.minorVersion))]")
+				case (10, 15):                  return ("5.1", "[.macOS(.v\(version.majorVersion)_\(version.minorVersion))]")
+					
+				/* Special versions (move to major above 10 and version 16 becoming 26 instead). */
+				case (10, 16), (11, _): return ("5.3", "[.macOS(.v11)]")
+				case (16, _),  (26, _): return ("6.2", "[.macOS(.v26)]")
+					
+				case (12, _):           return ("5.5", "[.macOS(.v\(version.majorVersion))]")
+				case (13, _):           return ("5.7", "[.macOS(.v\(version.majorVersion))]")
+				case (15, _):           return ("6.0", "[.macOS(.v\(version.majorVersion))]")
+				case (27, _):           return ("6.4", "[.macOS(.v\(version.majorVersion))]")
+					
+				default:
+					logger?.notice("Unknown macOS version; we are using Swift 6.4.", metadata: ["version": "\(version)"])
+					return ("6.4", "[.macOS(.v\(version.majorVersion))]")
 			}
 #else
-			return "nil"
+			/* Retrieving the current version of Swift is a bit annoying to do.
+			 * For now we just use Swift 6.0, which is the version used in the Swift SH package itself. */
+			return ("6.0", "nil")
 #endif
 		}()
 		return Data(#"""
-			// swift-tools-version:5.7
+			// swift-tools-version:\#(swiftVersion ?? inferredSwiftVersion)
 			import PackageDescription
 			
 			
